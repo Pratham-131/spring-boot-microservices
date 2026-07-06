@@ -1,109 +1,103 @@
-# Spring Boot Microservices — Identity, Config & Gateway
+# Spring Boot Microservices — Identity, Config, Gateway & Discovery
 
-A microservices-based backend system built with Spring Boot, demonstrating service discovery, centralized configuration, JWT-based authentication, and API gateway routing.
+A distributed backend system of 5 independently deployable Spring Boot services, demonstrating service discovery, centralized configuration, JWT-based authentication, API gateway routing, and containerized local orchestration with CI/CD.
 
 ## What This Project Does
 
-This system is made up of four independent Spring Boot services that work together:
+A client sends a request to a single entry point — the **API Gateway** — which looks up the correct downstream service via **Eureka**, validates the caller's JWT (for protected routes), and forwards the request. Each service is independently deployable, discovers its peers dynamically instead of relying on hardcoded addresses, and pulls its configuration from a shared **Config Server** at startup rather than keeping it locally. The whole system spins up with one command via Docker Compose, and every push is automatically built and tested across all 5 services through a CI pipeline.
 
-1. **Eureka Naming Server** (`localhost:8761`) — Service registry. Every other service registers itself here and discovers other services through it instead of using hardcoded URLs.
-2. **Spring Cloud Config Server** (`localhost:8888`) — Centralized configuration server. Services fetch their configuration from here at startup instead of keeping it locally.
-3. **Identity Service** (`localhost:8080`) — Handles user registration, login, and JWT token issuance/validation. Uses Spring Security, JPA, and an H2 in-memory database.
-4. **API Gateway Service** (`localhost:8765`) — Single entry point that routes incoming requests to the correct downstream service using Spring Cloud Gateway, and validates JWT tokens before forwarding requests.
+The five services:
+
+1. **Eureka Naming Server** (`localhost:8761`) — Service registry. Every other service registers itself here and discovers peers through it.
+2. **Spring Cloud Config Server** (`localhost:8888`) — Centralized configuration, served from the local classpath (native profile) — no external Git dependency required.
+3. **Identity Service** (`localhost:8080`) — User registration, login, and JWT token issuance/validation. Spring Security + Spring Data JPA, backed by H2 for local development.
+4. **Demo Controller Service** (`localhost:8081`) — A sample downstream business service exposing a JWT-protected endpoint, used to demonstrate the gateway → discovery → protected-resource flow end to end.
+5. **API Gateway Service** (`localhost:8765`) — Single entry point. Routes requests via Spring Cloud Gateway and validates JWTs before forwarding to any downstream service.
 
 ## Architecture
 
 ```
-                        ┌─────────────────────┐
+                        ┌───────────────────────┐
                         │  Eureka Naming Server │
                         │      (port 8761)      │
                         └──────────┬────────────┘
                                    │ service registration
-                 ┌─────────────────┼─────────────────┐
-                 │                 │                 │
-        ┌────────▼────────┐ ┌──────▼──────┐  ┌───────▼────────┐
-        │  Config Server   │ │  Identity    │  │  API Gateway   │
-        │   (port 8888)    │ │  Service     │  │   (port 8765)  │
-        │                  │ │ (port 8080)  │  │                │
-        └──────────────────┘ └──────┬───────┘  └───────┬────────┘
-                                     │                   │
-                              ┌──────▼──────┐            │
-                              │ H2 Database │◄───────────┘
-                              │ (in-memory) │   routes requests here
+                 ┌─────────────────┼─────────────────┬──────────────────┐
+                 │                 │                 │                  │
+        ┌────────▼────────┐ ┌──────▼──────┐  ┌───────▼────────┐ ┌───────▼────────┐
+        │  Config Server   │ │  Identity   │  │  Demo Controller│ │  API Gateway   │
+        │   (port 8888)    │ │  Service    │  │   (port 8081)   │ │   (port 8765)  │
+        │                  │ │ (port 8080) │  │                 │ │                │
+        └──────────────────┘ └──────┬──────┘  └────────┬────────┘ └───────┬────────┘
+                                     │                  │                  │
+                              ┌──────▼──────┐           └──────────────────┘
+                              │ H2 Database │       routes + validates JWT here
+                              │ (in-memory) │
                               └─────────────┘
 ```
-
-All requests from a client go through the **API Gateway**, which looks up the target service via **Eureka**, validates the JWT (for protected routes), and forwards the request.
 
 ## Tech Stack
 
 - **Java 17**, **Spring Boot 3.2.4**
 - **Spring Cloud** — Netflix Eureka (service discovery), Config Server, Gateway
 - **Spring Security** + **JWT** (jjwt) — stateless authentication
-- **Spring Data JPA** + **H2** (in-memory database for local development; MySQL-ready via included connector)
-- **Lombok** — boilerplate reduction
-- **Maven** — build tool
+- **Spring Data JPA** + **H2** (in-memory; MySQL-ready via included connector)
+- **Docker** + **Docker Compose** — one-command orchestration of all 5 services
+- **GitHub Actions** — CI pipeline builds and tests every service on each push
+- **Lombok**, **Maven**
 
 ## How to Run
 
-### Prerequisites
-- JDK 17 or newer
-- No need to install Maven separately — each service includes the Maven wrapper (`mvnw`)
+### Option A — Docker Compose (recommended)
 
-### Startup order matters
-
-Services must be started in this order, each in its own terminal:
-
-**1. Eureka Naming Server**
 ```bash
-cd eureka-naming-server
-./mvnw spring-boot:run
-```
-Wait for `Started EurekaNamingServerApplication`. Confirm at `http://localhost:8761`.
-
-**2. Spring Cloud Config Server**
-```bash
-cd spring-cloud-config-server
-./mvnw spring-boot:run
+docker compose up --build
 ```
 
-**3. Identity Service**
+Brings up all 5 services on their respective ports, networked together, in the correct startup order. Check the Eureka dashboard at `http://localhost:8761` — all services should register as UP within a minute or so.
+
+### Option B — Run locally without Docker
+
+Each service includes the Maven wrapper (`mvnw`), so no separate Maven install is needed. Requires JDK 17+. Start in this order, each in its own terminal:
+
 ```bash
-cd identity-service
-./mvnw spring-boot:run
+cd eureka-naming-server && ./mvnw spring-boot:run
+cd spring-cloud-config-server && ./mvnw spring-boot:run
+cd identity-service && ./mvnw spring-boot:run       # needs .env with SECRET_KEY
+cd demo-controller-microservice && ./mvnw spring-boot:run
+cd api-gateway-service && ./mvnw spring-boot:run    # needs same SECRET_KEY as identity-service
 ```
-Requires a `.env` file in this folder with:
+
+`identity-service` and `api-gateway-service` each require a `.env` file (not committed) containing:
 ```
 SECRET_KEY=<base64-encoded-256-bit-key>
 ```
-
-**4. API Gateway Service**
-```bash
-cd api-gateway-service
-./mvnw spring-boot:run
-```
-Also requires a matching `.env` file with the **same** `SECRET_KEY` as identity-service, since the gateway validates tokens issued by identity-service.
+Both must use the **same** key, since the gateway validates tokens issued by the identity service.
 
 ### Verifying it's working
 
-- Eureka dashboard: `http://localhost:8761` — should list `IDENTITY-SERVICE`, `SPRING-CLOUD-CONFIG-SERVER`, and `API-GATEWAY-SERVICE` as UP.
+- Eureka dashboard: `http://localhost:8761` — lists all 5 services as UP.
 - H2 console: `http://localhost:8080/h2-console` — JDBC URL `jdbc:h2:mem:identitydb`, username `sa`, no password.
-- Routing through the gateway: requests to `http://localhost:8765/identity-service/**` are forwarded to the Identity Service.
+- End-to-end flow: register/login via `identity-service` through the gateway (`http://localhost:8765/identity-service/**`) to get a JWT, then call the protected demo endpoint (`http://localhost:8765/demo-controller/api/test/demo-controller/greet`) with that token.
 
-## Debugging Notes (What I Fixed)
+## CI/CD
 
-Getting this system running locally involved resolving several real issues, documented here for transparency:
+Every push and pull request to `main` triggers a GitHub Actions workflow that builds and runs tests for all 5 services independently (matrix build) — catching compilation or integration issues before merge.
 
-- **Lombok not generating code** — Maven wasn't running Lombok's annotation processor by default under the project's JDK setup. Fixed by explicitly declaring the Lombok version and adding an `annotationProcessorPaths` block to the compiler plugin.
-- **JDK version mismatch** — The project targets Java 17, but a newer locally-installed JDK (25) caused Lombok to fail with an internal compiler error. Installed JDK 17 (Eclipse Temurin) alongside the existing JDK and pointed `JAVA_HOME` at it.
-- **Missing environment secrets** — Both Identity Service and API Gateway read a `SECRET_KEY` from a `.env` file that isn't (and shouldn't be) committed to source control. Generated a proper Base64-encoded 256-bit key and created matching `.env` files for both services.
-- **No database configured** — The original setup expected a MySQL connection that wasn't available locally. Swapped in an H2 in-memory database for local development (MySQL connector is still present for production use).
-- **Config Server needed a Git-backed repository** — By default, Spring Cloud Config Server expects a Git URI for configuration. Switched it to `native` profile mode, which serves configuration from the local classpath instead — no external Git dependency needed for local development.
+## Debugging Notes
+
+Getting this system running locally involved resolving several real issues:
+
+- **Lombok not generating code** under the project's JDK setup — fixed by explicitly declaring the Lombok version and adding an `annotationProcessorPaths` block to the compiler plugin.
+- **JDK version mismatch** — project targets Java 17; a newer local JDK (25) broke Lombok's annotation processing. Installed JDK 17 (Eclipse Temurin) and pointed `JAVA_HOME` at it.
+- **Missing environment secrets** — generated proper Base64-encoded 256-bit keys and created matching `.env` files for both services that need them.
+- **No database configured** — swapped in H2 in-memory for local development (MySQL connector retained for production use).
+- **Config Server needed a Git-backed repo by default** — switched to `native` profile mode to serve config from the local classpath instead.
 
 ## Notes
 
-- This project is set up for local development. For production, the H2 database would be replaced with MySQL/PostgreSQL, the JWT secret would be pulled from a proper secrets manager, and the Config Server would point to a real Git repository or config store.
-- `.env` files are excluded from version control via `.gitignore` — you'll need to create your own for each service that requires one.
+- Local-dev setup: for production, H2 would be replaced with MySQL/PostgreSQL, the JWT secret pulled from a secrets manager, and the Config Server pointed at a real Git repo or config store.
+- `.env` files are excluded via `.gitignore` — create your own per service.
 
 ## License
 
