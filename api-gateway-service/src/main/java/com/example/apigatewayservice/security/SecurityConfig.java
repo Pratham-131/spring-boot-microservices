@@ -26,10 +26,12 @@ public class SecurityConfig {
                 .csrf(ServerHttpSecurity.CsrfSpec::disable)
                 .authorizeExchange(exchanges -> exchanges
                         .pathMatchers("/identity-service/api/auth/register",
-                                "/identity-service/api/auth/authenticate","/demo-controller/api/test/demo-controller/greet","/identity-service/api/auth/logout")
+                                "/identity-service/api/auth/authenticate","/demo-controller/api/test/demo-controller/greet","/identity-service/api/auth/logout",
+                                "/fallback/**")
                         .permitAll()
                 )
                 .addFilterAt(customAuthenticationFilter, SecurityWebFiltersOrder.AUTHENTICATION);
+                
 
         return http.build();
     }

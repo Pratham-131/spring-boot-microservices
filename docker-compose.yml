@@ -1,0 +1,91 @@
+version: "3.8"
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: postgres
+    environment:
+      POSTGRES_DB: identitydb
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  eureka-naming-server:
+    build: ./eureka-naming-server
+    container_name: eureka-naming-server
+    ports:
+      - "8761:8761"
+
+  spring-cloud-config-server:
+    build: ./spring-cloud-config-server
+    container_name: spring-cloud-config-server
+    ports:
+      - "8888:8888"
+    environment:
+      EUREKA_CLIENT_SERVICEURL_DEFAULTZONE: http://eureka-naming-server:8761/eureka/
+    depends_on:
+      - eureka-naming-server
+
+  identity-service:
+    build: ./identity-service
+    container_name: identity-service
+    ports:
+      - "8080:8080"
+    environment:
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: identitydb
+      DB_USER: postgres
+      DB_PASSWORD: postgres
+      EUREKA_CLIENT_SERVICEURL_DEFAULTZONE: http://eureka-naming-server:8761/eureka/
+      SPRING_CONFIG_IMPORT: optional:configserver:http://spring-cloud-config-server:8888
+      SECRET_KEY: ${SECRET_KEY}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      eureka-naming-server:
+        condition: service_started
+      spring-cloud-config-server:
+        condition: service_started
+
+  demo-controller-microservice:
+    build: ./demo-controller-microservice
+    container_name: demo-controller
+    ports:
+      - "8081:8081"
+    environment:
+      EUREKA_CLIENT_SERVICEURL_DEFAULTZONE: http://eureka-naming-server:8761/eureka/
+      SPRING_CONFIG_IMPORT: optional:configserver:http://spring-cloud-config-server:8888
+      SECRET_KEY: ${SECRET_KEY}
+    depends_on:
+      eureka-naming-server:
+        condition: service_started
+      spring-cloud-config-server:
+        condition: service_started
+
+  api-gateway-service:
+    build: ./api-gateway-service
+    container_name: api-gateway-service
+    ports:
+      - "8765:8080"
+    environment:
+      EUREKA_CLIENT_SERVICEURL_DEFAULTZONE: http://eureka-naming-server:8761/eureka/
+      SECRET_KEY: ${SECRET_KEY}
+    depends_on:
+      eureka-naming-server:
+        condition: service_started
+      identity-service:
+        condition: service_started
+      demo-controller-microservice:
+        condition: service_started
+
+volumes:
+  pgdata:

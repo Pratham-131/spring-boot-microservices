@@ -10,7 +10,9 @@ public class RouterValidator {
 
     public static final List<String> openEndpoints = List.of(
             "/identity-service/api/auth/register",
-            "/identity-service/api/auth/authenticate"
+            "/identity-service/api/auth/authenticate",
+            "/fallback/identity",
+            "/fallback/demo"
     );
 
     public Predicate<ServerHttpRequest> isSecured = request -> openEndpoints.stream()
