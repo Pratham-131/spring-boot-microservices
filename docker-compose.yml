@@ -18,6 +18,12 @@ services:
       timeout: 5s
       retries: 10
 
+  zipkin:
+    image: openzipkin/zipkin:latest
+    container_name: zipkin
+    ports:
+      - "9411:9411"
+
   eureka-naming-server:
     build: ./eureka-naming-server
     container_name: eureka-naming-server
@@ -48,12 +54,15 @@ services:
       EUREKA_CLIENT_SERVICEURL_DEFAULTZONE: http://eureka-naming-server:8761/eureka/
       SPRING_CONFIG_IMPORT: optional:configserver:http://spring-cloud-config-server:8888
       SECRET_KEY: ${SECRET_KEY}
+      ZIPKIN_ENDPOINT: http://zipkin:9411/api/v2/spans
     depends_on:
       postgres:
         condition: service_healthy
       eureka-naming-server:
         condition: service_started
       spring-cloud-config-server:
+        condition: service_started
+      zipkin:
         condition: service_started
 
   demo-controller-microservice:
@@ -65,10 +74,13 @@ services:
       EUREKA_CLIENT_SERVICEURL_DEFAULTZONE: http://eureka-naming-server:8761/eureka/
       SPRING_CONFIG_IMPORT: optional:configserver:http://spring-cloud-config-server:8888
       SECRET_KEY: ${SECRET_KEY}
+      ZIPKIN_ENDPOINT: http://zipkin:9411/api/v2/spans
     depends_on:
       eureka-naming-server:
         condition: service_started
       spring-cloud-config-server:
+        condition: service_started
+      zipkin:
         condition: service_started
 
   api-gateway-service:
@@ -79,12 +91,15 @@ services:
     environment:
       EUREKA_CLIENT_SERVICEURL_DEFAULTZONE: http://eureka-naming-server:8761/eureka/
       SECRET_KEY: ${SECRET_KEY}
+      ZIPKIN_ENDPOINT: http://zipkin:9411/api/v2/spans
     depends_on:
       eureka-naming-server:
         condition: service_started
       identity-service:
         condition: service_started
       demo-controller-microservice:
+        condition: service_started
+      zipkin:
         condition: service_started
 
 volumes:
