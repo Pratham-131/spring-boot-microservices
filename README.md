@@ -2,6 +2,12 @@
 
 A small three-service system built with Java 17, Spring Boot 3.2, Maven, MongoDB, Spring Security, JWT, Spring Cloud Gateway, and Resilience4j. Each service is a standalone Maven project with its own dependencies, tests, and Dockerfile.
 
+## What this project does
+
+This project is a simple microservices-based backend for managing user authentication and product catalog data. The `auth-service` handles user registration and login, issues JWT tokens, and validates credentials. The `product-service` stores and exposes products, while the `api-gateway` sits in front of both services to route incoming requests, secure product creation, and provide fallback responses when a downstream service is unavailable.
+
+The system demonstrates how separate Spring Boot services can work together using Docker Compose, MongoDB, JWT-based security, and gateway routing in a realistic cloud-native setup.
+
 ## Architecture
 
 ```text
