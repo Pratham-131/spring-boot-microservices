@@ -9,19 +9,32 @@ Clients -> API Gateway :8080 -> Auth service :4001 -> MongoDB authdb
                              -> Product service :4002 -> MongoDB productdb
 ```
 
-The gateway forwards `/auth/**` and `/products/**` to their services. The services are not published on host ports by Compose; only the gateway (`8080`) and MongoDB (`27017`) are. MongoDB stores separate databases for auth and product data. Circuit-breaker fallbacks return HTTP 503 using the standard error JSON format.
+The gateway forwards `/auth/**` and `/products/**` unchanged. Compose publishes the gateway on host port `8080` and MongoDB on host port `27017` by default; auth (`4001`) and product (`4002`) ports remain internal to the Compose network. `GATEWAY_HOST_PORT` and `MONGO_HOST_PORT` can override the host-side ports. MongoDB uses separate `authdb` and `productdb` databases. If a downstream call fails, the gateway circuit breaker forwards to `/fallback`, which returns HTTP 503.
 
 ## Services and Endpoints
 
-| Service | Container port | Endpoints |
-| --- | ---: | --- |
-| `auth-service` | 4001 | `POST /auth/register`, `POST /auth/login`, `GET /actuator/health`, `/v3/api-docs`, `/swagger-ui/index.html` |
-| `product-service` | 4002 | `GET /products`, `GET /products/{id}`, `POST /products`, `PUT /products/{id}`, `DELETE /products/{id}`, `GET /actuator/health`, `/v3/api-docs`, `/swagger-ui/index.html` |
-| `api-gateway` | 8080 | Routes auth and product requests; `GET /actuator/health` |
+| Service | Port | Method and endpoint | Auth | Success | Error/other |
+| --- | ---: | --- | --- | --- | --- |
+| `auth-service` | 4001 | `POST /auth/register` | Public | 201 | 400 invalid body; 409 duplicate email |
+| `auth-service` | 4001 | `POST /auth/login` | Public | 200 | 400 invalid body; 401 invalid credentials |
+| `auth-service` | 4001 | `GET /actuator/health` | Public | 200 | |
+| `auth-service` | 4001 | `GET /v3/api-docs` | Public | 200 | |
+| `auth-service` | 4001 | `GET /swagger-ui/index.html` | Public | 200 | |
+| `product-service` | 4002 | `GET /products` | Public | 200 | |
+| `product-service` | 4002 | `GET /products/{id}` | Public | 200 | 404 product not found |
+| `product-service` | 4002 | `POST /products` | JWT | 200 | 400 invalid body; 401 missing/invalid token |
+| `product-service` | 4002 | `PUT /products/{id}` | JWT | 200 | 400 invalid body; 401 missing/invalid token; 404 product not found |
+| `product-service` | 4002 | `DELETE /products/{id}` | JWT | 204 | 401 missing/invalid token; 404 product not found |
+| `product-service` | 4002 | `GET /actuator/health` | Public | 200 | |
+| `product-service` | 4002 | `GET /v3/api-docs` | Public | 200 | |
+| `product-service` | 4002 | `GET /swagger-ui/index.html` | Public | 200 | |
+| `api-gateway` | 8080 | All methods: `/auth/**`, `/products/**` | Same as downstream endpoint | Downstream status | 503 when circuit breaker falls back |
+| `api-gateway` | 8080 | `GET /actuator/health` | Public | 200 | |
+| `api-gateway` | 8080 | Any method: `/fallback` | Public | 503 | Circuit-breaker response |
 
-Product reads are public. Create, update, and delete require `Authorization: Bearer <token>`; JWT signature and expiry are checked in `product-service`. Registration stores a BCrypt password hash but returns only the user ID and email. Login issues a one-hour JWT. Product request bodies require a nonblank name and a price greater than zero. Duplicate registration returns 409; invalid credentials or missing/invalid write tokens return 401; validation errors return 400; missing products return 404.
+The gateway only routes requests; JWT signature and expiry validation happens in the `product-service` filter for `POST`, `PUT`, and `DELETE` under `/products`. Product reads are public. Product write bodies require a nonblank `name` and `price > 0`. Registration stores a BCrypt hash and returns only the user ID and email; login issues a signed JWT that expires after one hour. The DELETE endpoint returns 204 on success.
 
-Errors use this JSON shape:
+Auth, product, gateway fallback, and product JWT-filter errors use this JSON shape; `timestamp` is ISO 8601:
 
 ```json
 {"timestamp":"2026-09-29T12:00:00Z","status":404,"error":"Not Found","message":"Product not found"}
@@ -29,48 +42,62 @@ Errors use this JSON shape:
 
 ## Run With Docker Compose
 
-Copy `.env.example` to `.env` and replace `JWT_SECRET` with a random value at least 32 bytes long. `.env` is ignored by Git. Then run from the repository root:
+Copy `.env.example` to `.env`, replace the `JWT_SECRET` placeholder with a random secret of at least 32 bytes, then run from the repository root. `.env.example` contains sample values, not a usable secret; `.env` is ignored by Git.
 
 ```bash
 docker compose up --build
 ```
 
-Compose waits for MongoDB and each service healthcheck before starting dependents. The gateway is at `http://localhost:8080` and its health endpoint is `http://localhost:8080/actuator/health`. Auth and product Swagger UI and health endpoints are available on their service ports when running those services directly; Compose keeps those ports internal. MongoDB is published on `27017` and the gateway on `8080` by default; set `MONGO_HOST_PORT` or `GATEWAY_HOST_PORT` in `.env` if either host port is already in use. Stop the stack with `Ctrl+C` or `docker compose down`; the MongoDB volume is retained.
+MongoDB health is checked with `mongosh` every 5 seconds (3-second timeout, 20 retries). Auth and product healthchecks call their `/actuator/health` endpoints every 10 seconds (5-second timeout, 12 retries, 25-second start period). Compose starts auth and product after MongoDB is healthy, then starts the gateway after both services are healthy. Health URLs are `http://localhost:8080/actuator/health` for the published gateway and, when running services directly, `http://localhost:4001/actuator/health` and `http://localhost:4002/actuator/health`.
+
+The auth and product ports are not published by Compose. Their Swagger UI URLs are `http://localhost:4001/swagger-ui/index.html` and `http://localhost:4002/swagger-ui/index.html` when those services run directly or their ports are otherwise published; Compose users can reach them from the internal network at `http://auth-service:4001/swagger-ui/index.html` and `http://product-service:4002/swagger-ui/index.html`. OpenAPI documents are at `/v3/api-docs` on each service. MongoDB is published on `27017` and the gateway on `8080` by default; set `MONGO_HOST_PORT` or `GATEWAY_HOST_PORT` in `.env` if either host port is already in use. Stop the stack with `Ctrl+C` or `docker compose down`; the MongoDB volume is retained.
 
 ## Environment Variables
 
-| Variable | Used by | Purpose |
+| Variable | Used by | Purpose/default |
 | --- | --- | --- |
-| `JWT_SECRET` | Auth and product services | Shared HMAC signing key; required, no committed default |
-| `AUTH_MONGO_URI` | Compose | Auth MongoDB connection URI; defaults to `mongodb://mongo:27017/authdb` |
-| `PRODUCT_MONGO_URI` | Compose | Product MongoDB connection URI; defaults to `mongodb://mongo:27017/productdb` |
-| `MONGO_HOST_PORT` | Compose | Host port for MongoDB; defaults to `27017` |
-| `GATEWAY_HOST_PORT` | Compose | Host port for the gateway; defaults to `8080` |
-| `MONGO_URI` | Auth or product when run directly | Service MongoDB URI; defaults to its local database on `localhost:27017` |
-| `AUTH_SERVICE_URL` | Gateway | Auth service address; defaults to `http://localhost:4001` |
-| `PRODUCT_SERVICE_URL` | Gateway | Product service address; defaults to `http://localhost:4002` |
+| `JWT_SECRET` | Auth and product services | Required shared HMAC signing secret; Compose has no fallback value. Set it in `.env` or the shell. |
+| `AUTH_MONGO_URI` | Compose | Auth database URI; defaults to `mongodb://mongo:27017/authdb`. |
+| `PRODUCT_MONGO_URI` | Compose | Product database URI; defaults to `mongodb://mongo:27017/productdb`. |
+| `MONGO_URI` | Auth or product service | Direct-run Mongo URI; defaults to `mongodb://localhost:27017/authdb` or `mongodb://localhost:27017/productdb`, respectively. Compose maps the service-specific URI above into this variable. |
+| `MONGO_HOST_PORT` | Compose | Host port mapped to MongoDB container port 27017; defaults to `27017`. |
+| `GATEWAY_HOST_PORT` | Compose | Host port mapped to gateway container port 8080; defaults to `8080`. |
+| `AUTH_SERVICE_URL` | Gateway when run directly | Auth service address; application default is `http://localhost:4001`. Compose sets `http://auth-service:4001`. |
+| `PRODUCT_SERVICE_URL` | Gateway when run directly | Product service address; application default is `http://localhost:4002`. Compose sets `http://product-service:4002`. |
 
-Compose passes the same `JWT_SECRET` to both JWT services. The example URIs use the internal Compose hostname `mongo`; for direct local runs, set `MONGO_URI` to the appropriate localhost database.
+`.env.example` lists `JWT_SECRET`, both service-specific Mongo URIs, and the host-port defaults. Copy it to `.env` and replace the JWT placeholder before starting the stack. No default JWT secret is committed.
 
 ## API Walkthrough
 
 These Bash commands exercise the complete flow through the gateway. They require `curl` and `jq`.
 
-Register and log in:
+Register, then repeat registration to receive 409:
 
 ```bash
 curl -i -X POST http://localhost:8080/auth/register \
   -H 'Content-Type: application/json' \
   -d '{"email":"user@example.com","password":"change-me"}'
 
+curl -i -X POST http://localhost:8080/auth/register \
+  -H 'Content-Type: application/json' \
+  -d '{"email":"user@example.com","password":"change-me"}'
+```
+
+Log in and capture the JWT:
+
+```bash
 TOKEN=$(curl -sS -X POST http://localhost:8080/auth/login \
   -H 'Content-Type: application/json' \
   -d '{"email":"user@example.com","password":"change-me"}' | jq -r '.token')
 ```
 
-Create and read a product without a token for GET:
+Try a product write without a token (401), then create one with the JWT:
 
 ```bash
+curl -i -X POST http://localhost:8080/products \
+  -H 'Content-Type: application/json' \
+  -d '{"name":"Keyboard","price":49.99}'
+
 PRODUCT_ID=$(curl -sS -X POST http://localhost:8080/products \
   -H "Authorization: Bearer $TOKEN" \
   -H 'Content-Type: application/json' \
@@ -78,11 +105,6 @@ PRODUCT_ID=$(curl -sS -X POST http://localhost:8080/products \
 
 curl http://localhost:8080/products
 curl "http://localhost:8080/products/$PRODUCT_ID"
-```
-
-Update and delete with the same token:
-
-```bash
 curl -i -X PUT "http://localhost:8080/products/$PRODUCT_ID" \
   -H "Authorization: Bearer $TOKEN" \
   -H 'Content-Type: application/json' \
@@ -102,14 +124,14 @@ mvn -B verify -f product-service/pom.xml
 mvn -B verify -f api-gateway/pom.xml
 ```
 
-Tests cover registration and login success/failure, duplicate emails, password-hash omission, product CRUD and not-found cases, validation, JWT requirements, gateway routes, and fallback responses.
+The current JUnit 5 test-method counts are **11** for `auth-service`, **18** for `product-service`, and **9** for `api-gateway` (38 total). These counts are from the `@Test` methods in the test source files. Coverage includes auth success/failure, duplicate emails, password-hash omission, product CRUD and not-found cases, validation, JWT requirements, gateway routes, and fallbacks.
 
 ## Design Decisions
 
 - **Database per service:** auth and product own separate MongoDB databases, keeping their data and schemas independent without adding another database technology.
 - **Circuit breaker:** Resilience4j prevents repeated calls to an unavailable downstream service and returns a clear 503 fallback.
-- **JWT:** the auth service issues signed, expiring tokens; product-service verifies them locally for write requests, avoiding a database lookup on each product mutation.
-- **Scaling later:** services can be replicated independently behind a load balancer; a service registry or orchestration platform is not needed for this small Compose deployment.
+- **Stateless JWT:** the auth service issues signed, expiring tokens; product-service verifies them locally for write requests, avoiding a database lookup on each product mutation.
+- **Scaling later:** keep the current deployment small; add Eureka for service discovery, Config Server for centralized configuration, and distributed tracing when the number of services or operational needs justify them.
 
 ## CI
 
