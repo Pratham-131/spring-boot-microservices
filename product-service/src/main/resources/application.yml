@@ -1,0 +1,8 @@
+server:
+  port: 4002
+spring:
+  data:
+    mongodb:
+      uri: ${MONGO_URI:mongodb://localhost:27017/productdb}
+jwt:
+  secret: ${JWT_SECRET:local-development-secret-key-change-before-deploying-123456}

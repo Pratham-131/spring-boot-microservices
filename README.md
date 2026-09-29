@@ -1,119 +1,132 @@
-# Spring Boot Microservices — Identity, Config, Gateway & Discovery
+# Spring Boot Microservices
 
-A distributed backend system of 5 independently deployable Spring Boot services, demonstrating service discovery, centralized configuration, JWT-based authentication, API gateway routing, fault tolerance, distributed tracing, and containerized orchestration with CI/CD.
-
-## What This Project Does
-
-A client sends a request to a single entry point — the **API Gateway** — which looks up the correct downstream service via **Eureka**, validates the caller's JWT (for protected routes), and forwards the request. Each service is independently deployable, discovers its peers dynamically instead of relying on hardcoded addresses, and pulls its configuration from a shared **Config Server** at startup rather than keeping it locally. The gateway wraps every downstream route in a **Resilience4j circuit breaker** with a fallback response, so a failing service degrades gracefully instead of cascading. Every request is traced end-to-end across services via **Micrometer + Zipkin**. The whole system spins up with one command via Docker Compose, and every push is automatically built and tested across all 5 services through a CI pipeline.
-
-The five services:
-
-1. **Eureka Naming Server** (`localhost:8761`) — Service registry. Every other service registers itself here and discovers peers through it.
-2. **Spring Cloud Config Server** (`localhost:8888`) — Centralized configuration, served from the local classpath (native profile) — no external Git dependency required.
-3. **Identity Service** (`localhost:8080`) — User registration, login, and JWT token issuance/validation. Spring Security + Spring Data JPA, backed by **PostgreSQL** (H2 retained for the test profile only).
-4. **Demo Controller Service** (`localhost:8081`) — A sample downstream business service exposing a JWT-protected endpoint, used to demonstrate the gateway → discovery → protected-resource flow end to end.
-5. **API Gateway Service** (`localhost:8765`) — Single entry point. Routes requests via Spring Cloud Gateway, validates JWTs, and applies circuit breakers with fallback routes before forwarding to any downstream service.
+A small three-service system built with Java 17, Spring Boot 3.2, Maven, MongoDB, Spring Security, JWT, Spring Cloud Gateway, and Resilience4j. Each service is a standalone Maven project with its own dependencies, tests, and Dockerfile.
 
 ## Architecture
 
+```text
+                           +------------------+
+                           |     Clients      |
+                           +--------+---------+
+                                    |
+                           +--------v---------+
+                           |   API Gateway    |
+                           |      :8080       |
+                           | Circuit breakers |
+                           +----+--------+----+
+                                |        |
+                   /auth/**     |        |     /products/**
+                         +------v--+  +--v-----------+
+                         |  Auth   |  |   Product    |
+                         | :4001  |  |    :4002     |
+                         +----+----+  +------+-------+
+                              |              |
+                       +------v--------------v------+
+                       |           MongoDB          |
+                       | authdb          productdb  |
+                       +----------------------------+
 ```
-                        ┌───────────────────────┐
-                        │  Eureka Naming Server │
-                        │      (port 8761)      │
-                        └──────────┬────────────┘
-                                   │ service registration
-                 ┌─────────────────┼─────────────────┬──────────────────┐
-                 │                 │                 │                  │
-        ┌────────▼────────┐ ┌──────▼──────┐  ┌───────▼────────┐ ┌───────▼────────┐
-        │  Config Server   │ │  Identity   │  │  Demo Controller│ │  API Gateway   │
-        │   (port 8888)    │ │  Service    │  │   (port 8081)   │ │   (port 8765)  │
-        │                  │ │ (port 8080) │  │                 │ │  circuit       │
-        └──────────────────┘ └──────┬──────┘  └────────┬────────┘ │  breaker +     │
-                                     │                  │          │  fallback here │
-                              ┌──────▼──────┐           │          └───────┬────────┘
-                              │  PostgreSQL │           └──────────────────┘
-                              │  (Docker)   │       routes + validates JWT here
-                              └─────────────┘
 
-        All 3 request-path services (Gateway, Identity, Demo Controller)
-        emit trace spans to → Zipkin (port 9411) for end-to-end tracing.
-```
+The gateway forwards `/auth/**` and `/products/**` unchanged. If either downstream service is unavailable, its circuit breaker forwards to a fallback that responds with `503` and `{"message":"Service unavailable"}`. Only the gateway (`8080`) and MongoDB (`27017`) are published by Docker Compose; service ports are available within the Compose network.
 
-## Tech Stack
+## Services
 
-- **Java 17**, **Spring Boot 3.2.4**
-- **Spring Cloud** — Netflix Eureka (service discovery), Config Server, Gateway
-- **Spring Security** + **JWT** (jjwt) — stateless authentication
-- **Spring Data JPA** + **PostgreSQL** (production datasource; H2 used only in the test profile for isolation)
-- **Resilience4j** — circuit breaker + timeout on gateway-to-service calls, with dedicated fallback endpoints
-- **Micrometer Tracing (Brave) + Zipkin** — distributed request tracing across the gateway and downstream services
-- **Docker** + **Docker Compose** — one-command orchestration of all services plus Postgres and Zipkin
-- **GitHub Actions** — CI pipeline builds and tests every service on each push (matrix build)
-- **Lombok**, **Maven**
+| Service | Port | API | Data |
+| --- | ---: | --- | --- |
+| `auth-service` | 4001 | `POST /auth/register`, `POST /auth/login` | MongoDB `authdb` |
+| `product-service` | 4002 | `GET /products`, `POST /products` | MongoDB `productdb` |
+| `api-gateway` | 8080 | Routes requests to both services | None |
 
-## How to Run
+Registration stores a BCrypt-hashed password. Login returns a signed JWT with a one-hour expiry. Product listing is public; creating a product requires `Authorization: Bearer <token>`. Invalid or missing tokens receive `401 Unauthorized`. Register, login, and product request bodies are validated; invalid input receives `400 Bad Request`.
 
-### Option A — Docker Compose (recommended)
+## Requirements
+
+- Java 17
+- Maven 3.6.3 or later
+- Docker Engine with the Docker Compose plugin
+- `curl` for the examples; `jq` is used to extract the login token
+
+## Run With Docker
+
+From the repository root, build and start MongoDB and all three services:
 
 ```bash
 docker compose up --build
 ```
 
-Brings up all services — Postgres, Zipkin, Eureka, Config Server, Identity, Demo Controller, Gateway — networked together in the correct healthcheck-gated startup order. Check the Eureka dashboard at `http://localhost:8761` — all services should register as UP within a minute or so.
+The gateway is available at `http://localhost:8080`. Give the services a few seconds to finish starting before sending requests. Stop the stack with `Ctrl+C`, or run `docker compose down` in another terminal. The MongoDB data volume is retained when containers stop.
 
-### Option B — Run locally without Docker
+### Environment Variables
 
-Each service includes the Maven wrapper (`mvnw`), so no separate Maven install is needed. Requires JDK 17+. Start in this order, each in its own terminal:
+Docker Compose supplies the internal MongoDB and service URLs. These defaults are also available when running each service directly:
+
+| Variable | Used by | Default |
+| --- | --- | --- |
+| `JWT_SECRET` | Auth and product services | `local-development-secret-key-change-before-deploying-123456` |
+| `MONGO_URI` | Auth service | `mongodb://localhost:27017/authdb` |
+| `MONGO_URI` | Product service | `mongodb://localhost:27017/productdb` |
+| `AUTH_SERVICE_URL` | Gateway | `http://localhost:4001` |
+| `PRODUCT_SERVICE_URL` | Gateway | `http://localhost:4002` |
+
+Set the same `JWT_SECRET` for auth and product services. The checked-in default is for local development only; replace it with a random secret of at least 32 bytes outside local development. Compose reads optional overrides from the shell or a root `.env` file.
+
+## API Walkthrough
+
+The following Bash examples register a user, log in, create a product with the returned token, and list products through the gateway.
+
+Register:
 
 ```bash
-cd eureka-naming-server && ./mvnw spring-boot:run
-cd spring-cloud-config-server && ./mvnw spring-boot:run
-cd identity-service && ./mvnw spring-boot:run       # needs .env with SECRET_KEY
-cd demo-controller-microservice && ./mvnw spring-boot:run
-cd api-gateway-service && ./mvnw spring-boot:run    # needs same SECRET_KEY as identity-service
+curl -i -X POST http://localhost:8080/auth/register \
+  -H 'Content-Type: application/json' \
+  -d '{"email":"user@example.com","password":"change-me"}'
 ```
 
-`identity-service` and `api-gateway-service` each require a `.env` file (not committed) containing:
+Log in and capture the token:
+
+```bash
+TOKEN=$(curl -sS -X POST http://localhost:8080/auth/login \
+  -H 'Content-Type: application/json' \
+  -d '{"email":"user@example.com","password":"change-me"}' | jq -r '.token')
 ```
-SECRET_KEY=<base64-encoded-256-bit-key>
+
+Create a product:
+
+```bash
+curl -i -X POST http://localhost:8080/products \
+  -H "Authorization: Bearer $TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d '{"name":"Keyboard","price":49.99}'
 ```
-Both must use the **same** key, since the gateway validates tokens issued by the identity service.
 
-### Verifying it's working
+List products without authentication:
 
-- Eureka dashboard: `http://localhost:8761` — lists all services as UP.
-- End-to-end flow: register/login via `identity-service` through the gateway (`http://localhost:8765/identity-service/**`) to get a JWT, then call the protected demo endpoint (`http://localhost:8765/demo-controller/api/test/demo-controller/greet`) with that token.
-- Circuit breaker: stop `identity-service` (`docker stop identity-service`) mid-flow — the gateway returns a `503` fallback response instead of hanging or erroring. Restart it — the breaker auto-recovers and requests succeed again.
-- Distributed tracing: open `http://localhost:9411` (Zipkin), click **Run Query** after making a request through the gateway — you'll see a trace spanning the gateway and whichever downstream service handled it, with per-hop timing.
+```bash
+curl http://localhost:8080/products
+```
 
-## Fault Tolerance
+Confirm that product creation without a token is rejected:
 
-The API Gateway wraps its routes to `identity-service` and `demo-controller-microservice` in Resilience4j circuit breakers with a 4s timeout and dedicated fallback controllers (`/fallback/identity`, `/fallback/demo`). If a downstream service is unavailable or slow, callers get a clear `503` instead of a hung connection or a raw 500 — and the breaker auto-transitions back to closed once the service recovers.
+```bash
+curl -i -X POST http://localhost:8080/products \
+  -H 'Content-Type: application/json' \
+  -d '{"name":"Keyboard","price":49.99}'
+```
 
-## Observability
+## Build and Test
 
-All three services in the request path (Gateway, Identity, Demo Controller) are instrumented with Micrometer Tracing (Brave bridge) and export spans to Zipkin. Every request gets a trace ID that's propagated through headers and shows up in each service's logs (`logging.pattern.level` includes `traceId`/`spanId`), making it possible to follow one request across service boundaries — not just read isolated per-service logs.
+Run verification for each independent Maven project from the repository root:
 
-## CI/CD
+```bash
+mvn -B verify -f auth-service/pom.xml
+mvn -B verify -f product-service/pom.xml
+mvn -B verify -f api-gateway/pom.xml
+```
 
-Every push and pull request to `main` triggers a GitHub Actions workflow that builds and runs tests for all 5 services independently (matrix build) — catching compilation or integration issues before merge.
+Each service includes two JUnit tests: a service-layer test and a controller test. GitHub Actions runs the same `mvn -B verify` command for all three services on Java 17 using a matrix.
 
-## Debugging Notes
+## CI
 
-Getting this system running locally involved resolving several real issues:
+[![CI](https://github.com/OWNER/REPOSITORY/actions/workflows/ci.yml/badge.svg)](https://github.com/OWNER/REPOSITORY/actions/workflows/ci.yml)
 
-- **Lombok not generating code** under the project's JDK setup — fixed by explicitly declaring the Lombok version and adding an `annotationProcessorPaths` block to the compiler plugin.
-- **JDK version mismatch** — project targets Java 17; a newer local JDK (25) broke Lombok's annotation processing. Installed JDK 17 (Eclipse Temurin) and pointed `JAVA_HOME` at it.
-- **Missing environment secrets** — generated proper Base64-encoded 256-bit keys and created matching `.env` files for both services that need them.
-- **No database configured** — moved to PostgreSQL via Docker Compose for the running system, with env-var-driven connection settings (`DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, `DB_PASSWORD`); H2 kept only for the test profile so tests stay fast and isolated.
-- **Config Server needed a Git-backed repo by default** — switched to `native` profile mode to serve config from the local classpath instead.
-
-## Notes
-
-- The JWT secret is pulled from a root `.env` file (gitignored) and injected via Docker Compose (`SECRET_KEY: ${SECRET_KEY}`). In production this would come from a proper secrets manager instead.
-- Config Server currently serves config from the local classpath (`native` profile); for production this would point at a real Git repo or config store.
-- `.env` files are excluded via `.gitignore` — create your own per service.
-
-## License
-
-For learning and portfolio purposes.
+Replace `OWNER/REPOSITORY` in the badge URL with the GitHub repository path.

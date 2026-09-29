@@ -1,106 +1,48 @@
-version: "3.8"
-
 services:
-  postgres:
-    image: postgres:16-alpine
-    container_name: postgres
-    environment:
-      POSTGRES_DB: identitydb
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
+  mongo:
+    image: mongo:7
+    container_name: mongo
     ports:
-      - "5432:5432"
+      - "27017:27017"
     volumes:
-      - pgdata:/var/lib/postgresql/data
+      - mongo-data:/data/db
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
       interval: 5s
-      timeout: 5s
-      retries: 10
+      timeout: 3s
+      retries: 20
 
-  zipkin:
-    image: openzipkin/zipkin:latest
-    container_name: zipkin
-    ports:
-      - "9411:9411"
-
-  eureka-naming-server:
-    build: ./eureka-naming-server
-    container_name: eureka-naming-server
-    ports:
-      - "8761:8761"
-
-  spring-cloud-config-server:
-    build: ./spring-cloud-config-server
-    container_name: spring-cloud-config-server
-    ports:
-      - "8888:8888"
+  auth-service:
+    build: ./auth-service
+    container_name: auth-service
     environment:
-      EUREKA_CLIENT_SERVICEURL_DEFAULTZONE: http://eureka-naming-server:8761/eureka/
+      MONGO_URI: mongodb://mongo:27017/authdb
+      JWT_SECRET: ${JWT_SECRET:-local-development-secret-key-change-before-deploying-123456}
     depends_on:
-      - eureka-naming-server
+      mongo:
+        condition: service_healthy
 
-  identity-service:
-    build: ./identity-service
-    container_name: identity-service
+  product-service:
+    build: ./product-service
+    container_name: product-service
+    environment:
+      MONGO_URI: mongodb://mongo:27017/productdb
+      JWT_SECRET: ${JWT_SECRET:-local-development-secret-key-change-before-deploying-123456}
+    depends_on:
+      mongo:
+        condition: service_healthy
+
+  api-gateway:
+    build: ./api-gateway
+    container_name: api-gateway
     ports:
       - "8080:8080"
     environment:
-      DB_HOST: postgres
-      DB_PORT: 5432
-      DB_NAME: identitydb
-      DB_USER: postgres
-      DB_PASSWORD: postgres
-      EUREKA_CLIENT_SERVICEURL_DEFAULTZONE: http://eureka-naming-server:8761/eureka/
-      SPRING_CONFIG_IMPORT: optional:configserver:http://spring-cloud-config-server:8888
-      SECRET_KEY: ${SECRET_KEY}
-      ZIPKIN_ENDPOINT: http://zipkin:9411/api/v2/spans
+      AUTH_SERVICE_URL: http://auth-service:4001
+      PRODUCT_SERVICE_URL: http://product-service:4002
     depends_on:
-      postgres:
-        condition: service_healthy
-      eureka-naming-server:
-        condition: service_started
-      spring-cloud-config-server:
-        condition: service_started
-      zipkin:
-        condition: service_started
-
-  demo-controller-microservice:
-    build: ./demo-controller-microservice
-    container_name: demo-controller
-    ports:
-      - "8081:8081"
-    environment:
-      EUREKA_CLIENT_SERVICEURL_DEFAULTZONE: http://eureka-naming-server:8761/eureka/
-      SPRING_CONFIG_IMPORT: optional:configserver:http://spring-cloud-config-server:8888
-      SECRET_KEY: ${SECRET_KEY}
-      ZIPKIN_ENDPOINT: http://zipkin:9411/api/v2/spans
-    depends_on:
-      eureka-naming-server:
-        condition: service_started
-      spring-cloud-config-server:
-        condition: service_started
-      zipkin:
-        condition: service_started
-
-  api-gateway-service:
-    build: ./api-gateway-service
-    container_name: api-gateway-service
-    ports:
-      - "8765:8080"
-    environment:
-      EUREKA_CLIENT_SERVICEURL_DEFAULTZONE: http://eureka-naming-server:8761/eureka/
-      SECRET_KEY: ${SECRET_KEY}
-      ZIPKIN_ENDPOINT: http://zipkin:9411/api/v2/spans
-    depends_on:
-      eureka-naming-server:
-        condition: service_started
-      identity-service:
-        condition: service_started
-      demo-controller-microservice:
-        condition: service_started
-      zipkin:
-        condition: service_started
+      - auth-service
+      - product-service
 
 volumes:
-  pgdata:
+  mongo-data:

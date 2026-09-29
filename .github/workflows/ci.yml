@@ -2,36 +2,23 @@ name: CI
 
 on:
   push:
-    branches: [main]
   pull_request:
-    branches: [main]
 
 jobs:
-  build:
+  verify:
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        service:
-          - eureka-naming-server
-          - spring-cloud-config-server
-          - api-gateway-service
-          - identity-service
-          - demo-controller-microservice
+        service: [auth-service, product-service, api-gateway]
     steps:
       - uses: actions/checkout@v4
-
-      - name: Set up JDK 17
-        uses: actions/setup-java@v4
+      - uses: actions/setup-java@v4
         with:
+          distribution: temurin
           java-version: '17'
-          distribution: 'temurin'
           cache: maven
           cache-dependency-path: ${{ matrix.service }}/pom.xml
-
-      - name: Make mvnw executable
-        run: chmod +x ${{ matrix.service }}/mvnw
-
-      - name: Build + test ${{ matrix.service }}
+      - name: Build and test
+        run: mvn -B verify
         working-directory: ${{ matrix.service }}
-        run: ./mvnw -B clean verify
