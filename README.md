@@ -1,127 +1,100 @@
 # Spring Boot Microservices
 
-A small three-service system built with Java 17, Spring Boot 3.2, Maven, MongoDB, Spring Security, JWT, Spring Cloud Gateway, and Resilience4j. Each service is a standalone Maven project with its own dependencies, tests, and Dockerfile.
-
-## What this project does
-
-This project is a simple microservices-based backend for managing user authentication and product catalog data. The `auth-service` handles user registration and login, issues JWT tokens, and validates credentials. The `product-service` stores and exposes products, while the `api-gateway` sits in front of both services to route incoming requests, secure product creation, and provide fallback responses when a downstream service is unavailable.
-
-The system demonstrates how separate Spring Boot services can work together using Docker Compose, MongoDB, JWT-based security, and gateway routing in a realistic cloud-native setup.
+A small Java 17 and Spring Boot 3.2 project with an API gateway, authentication service, product service, MongoDB, JWT, and Resilience4j circuit breakers. Each service is an independent Maven project.
 
 ## Architecture
 
 ```text
-                           +------------------+
-                           |     Clients      |
-                           +--------+---------+
-                                    |
-                           +--------v---------+
-                           |   API Gateway    |
-                           |      :8080       |
-                           | Circuit breakers |
-                           +----+--------+----+
-                                |        |
-                   /auth/**     |        |     /products/**
-                         +------v--+  +--v-----------+
-                         |  Auth   |  |   Product    |
-                         | :4001  |  |    :4002     |
-                         +----+----+  +------+-------+
-                              |              |
-                       +------v--------------v------+
-                       |           MongoDB          |
-                       | authdb          productdb  |
-                       +----------------------------+
+Clients -> API Gateway :8080 -> Auth service :4001 -> MongoDB authdb
+                             -> Product service :4002 -> MongoDB productdb
 ```
 
-The gateway forwards `/auth/**` and `/products/**` unchanged. If either downstream service is unavailable, its circuit breaker forwards to a fallback that responds with `503` and `{"message":"Service unavailable"}`. Only the gateway (`8080`) and MongoDB (`27017`) are published by Docker Compose; service ports are available within the Compose network.
+The gateway forwards `/auth/**` and `/products/**` to their services. The services are not published on host ports by Compose; only the gateway (`8080`) and MongoDB (`27017`) are. MongoDB stores separate databases for auth and product data. Circuit-breaker fallbacks return HTTP 503 using the standard error JSON format.
 
-## Services
+## Services and Endpoints
 
-| Service | Port | API | Data |
-| --- | ---: | --- | --- |
-| `auth-service` | 4001 | `POST /auth/register`, `POST /auth/login` | MongoDB `authdb` |
-| `product-service` | 4002 | `GET /products`, `POST /products` | MongoDB `productdb` |
-| `api-gateway` | 8080 | Routes requests to both services | None |
+| Service | Container port | Endpoints |
+| --- | ---: | --- |
+| `auth-service` | 4001 | `POST /auth/register`, `POST /auth/login`, `GET /actuator/health`, `/v3/api-docs`, `/swagger-ui/index.html` |
+| `product-service` | 4002 | `GET /products`, `GET /products/{id}`, `POST /products`, `PUT /products/{id}`, `DELETE /products/{id}`, `GET /actuator/health`, `/v3/api-docs`, `/swagger-ui/index.html` |
+| `api-gateway` | 8080 | Routes auth and product requests; `GET /actuator/health` |
 
-Registration stores a BCrypt-hashed password. Login returns a signed JWT with a one-hour expiry. Product listing is public; creating a product requires `Authorization: Bearer <token>`. Invalid or missing tokens receive `401 Unauthorized`. Register, login, and product request bodies are validated; invalid input receives `400 Bad Request`.
+Product reads are public. Create, update, and delete require `Authorization: Bearer <token>`; JWT signature and expiry are checked in `product-service`. Registration stores a BCrypt password hash but returns only the user ID and email. Login issues a one-hour JWT. Product request bodies require a nonblank name and a price greater than zero. Duplicate registration returns 409; invalid credentials or missing/invalid write tokens return 401; validation errors return 400; missing products return 404.
 
-## Requirements
+Errors use this JSON shape:
 
-- Java 17
-- Maven 3.6.3 or later
-- Docker Engine with the Docker Compose plugin
-- `curl` for the examples; `jq` is used to extract the login token
+```json
+{"timestamp":"2026-09-29T12:00:00Z","status":404,"error":"Not Found","message":"Product not found"}
+```
 
-## Run With Docker
+## Run With Docker Compose
 
-From the repository root, build and start MongoDB and all three services:
+Copy `.env.example` to `.env` and replace `JWT_SECRET` with a random value at least 32 bytes long. `.env` is ignored by Git. Then run from the repository root:
 
 ```bash
 docker compose up --build
 ```
 
-The gateway is available at `http://localhost:8080`. Give the services a few seconds to finish starting before sending requests. Stop the stack with `Ctrl+C`, or run `docker compose down` in another terminal. The MongoDB data volume is retained when containers stop.
+Compose waits for MongoDB and each service healthcheck before starting dependents. The gateway is at `http://localhost:8080` and its health endpoint is `http://localhost:8080/actuator/health`. Auth and product Swagger UI and health endpoints are available on their service ports when running those services directly; Compose keeps those ports internal. MongoDB is published on `27017` and the gateway on `8080` by default; set `MONGO_HOST_PORT` or `GATEWAY_HOST_PORT` in `.env` if either host port is already in use. Stop the stack with `Ctrl+C` or `docker compose down`; the MongoDB volume is retained.
 
-### Environment Variables
+## Environment Variables
 
-Docker Compose supplies the internal MongoDB and service URLs. These defaults are also available when running each service directly:
-
-| Variable | Used by | Default |
+| Variable | Used by | Purpose |
 | --- | --- | --- |
-| `JWT_SECRET` | Auth and product services | `local-development-secret-key-change-before-deploying-123456` |
-| `MONGO_URI` | Auth service | `mongodb://localhost:27017/authdb` |
-| `MONGO_URI` | Product service | `mongodb://localhost:27017/productdb` |
-| `AUTH_SERVICE_URL` | Gateway | `http://localhost:4001` |
-| `PRODUCT_SERVICE_URL` | Gateway | `http://localhost:4002` |
+| `JWT_SECRET` | Auth and product services | Shared HMAC signing key; required, no committed default |
+| `AUTH_MONGO_URI` | Compose | Auth MongoDB connection URI; defaults to `mongodb://mongo:27017/authdb` |
+| `PRODUCT_MONGO_URI` | Compose | Product MongoDB connection URI; defaults to `mongodb://mongo:27017/productdb` |
+| `MONGO_HOST_PORT` | Compose | Host port for MongoDB; defaults to `27017` |
+| `GATEWAY_HOST_PORT` | Compose | Host port for the gateway; defaults to `8080` |
+| `MONGO_URI` | Auth or product when run directly | Service MongoDB URI; defaults to its local database on `localhost:27017` |
+| `AUTH_SERVICE_URL` | Gateway | Auth service address; defaults to `http://localhost:4001` |
+| `PRODUCT_SERVICE_URL` | Gateway | Product service address; defaults to `http://localhost:4002` |
 
-Set the same `JWT_SECRET` for auth and product services. The checked-in default is for local development only; replace it with a random secret of at least 32 bytes outside local development. Compose reads optional overrides from the shell or a root `.env` file.
+Compose passes the same `JWT_SECRET` to both JWT services. The example URIs use the internal Compose hostname `mongo`; for direct local runs, set `MONGO_URI` to the appropriate localhost database.
 
 ## API Walkthrough
 
-The following Bash examples register a user, log in, create a product with the returned token, and list products through the gateway.
+These Bash commands exercise the complete flow through the gateway. They require `curl` and `jq`.
 
-Register:
+Register and log in:
 
 ```bash
 curl -i -X POST http://localhost:8080/auth/register \
   -H 'Content-Type: application/json' \
   -d '{"email":"user@example.com","password":"change-me"}'
-```
 
-Log in and capture the token:
-
-```bash
 TOKEN=$(curl -sS -X POST http://localhost:8080/auth/login \
   -H 'Content-Type: application/json' \
   -d '{"email":"user@example.com","password":"change-me"}' | jq -r '.token')
 ```
 
-Create a product:
+Create and read a product without a token for GET:
 
 ```bash
-curl -i -X POST http://localhost:8080/products \
+PRODUCT_ID=$(curl -sS -X POST http://localhost:8080/products \
   -H "Authorization: Bearer $TOKEN" \
   -H 'Content-Type: application/json' \
-  -d '{"name":"Keyboard","price":49.99}'
-```
+  -d '{"name":"Keyboard","price":49.99}' | jq -r '.id')
 
-List products without authentication:
-
-```bash
 curl http://localhost:8080/products
+curl "http://localhost:8080/products/$PRODUCT_ID"
 ```
 
-Confirm that product creation without a token is rejected:
+Update and delete with the same token:
 
 ```bash
-curl -i -X POST http://localhost:8080/products \
+curl -i -X PUT "http://localhost:8080/products/$PRODUCT_ID" \
+  -H "Authorization: Bearer $TOKEN" \
   -H 'Content-Type: application/json' \
-  -d '{"name":"Keyboard","price":49.99}'
+  -d '{"name":"Mechanical Keyboard","price":59.99}'
+
+curl -i -X DELETE "http://localhost:8080/products/$PRODUCT_ID" \
+  -H "Authorization: Bearer $TOKEN"
 ```
 
 ## Build and Test
 
-Run verification for each independent Maven project from the repository root:
+Run each independent Maven verification from the repository root:
 
 ```bash
 mvn -B verify -f auth-service/pom.xml
@@ -129,8 +102,17 @@ mvn -B verify -f product-service/pom.xml
 mvn -B verify -f api-gateway/pom.xml
 ```
 
-Each service includes two JUnit tests: a service-layer test and a controller test. GitHub Actions runs the same `mvn -B verify` command for all three services on Java 17 using a matrix.
+Tests cover registration and login success/failure, duplicate emails, password-hash omission, product CRUD and not-found cases, validation, JWT requirements, gateway routes, and fallback responses.
+
+## Design Decisions
+
+- **Database per service:** auth and product own separate MongoDB databases, keeping their data and schemas independent without adding another database technology.
+- **Circuit breaker:** Resilience4j prevents repeated calls to an unavailable downstream service and returns a clear 503 fallback.
+- **JWT:** the auth service issues signed, expiring tokens; product-service verifies them locally for write requests, avoiding a database lookup on each product mutation.
+- **Scaling later:** services can be replicated independently behind a load balancer; a service registry or orchestration platform is not needed for this small Compose deployment.
 
 ## CI
+
+GitHub Actions runs Maven `verify` for all three services on Java 17, caches Maven dependencies, and runs on pushes and pull requests targeting `main`.
 
 [![CI](https://github.com/Pratham-131/spring-boot-microservices/actions/workflows/ci.yml/badge.svg)](https://github.com/Pratham-131/spring-boot-microservices/actions/workflows/ci.yml)

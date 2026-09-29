@@ -1,9 +1,13 @@
 package com.example.auth.service;
 
-import com.example.auth.model.User;
-import com.example.auth.repository.UserRepository;
+import org.springframework.dao.DuplicateKeyException;
+import org.springframework.http.HttpStatus;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
+import org.springframework.web.server.ResponseStatusException;
+
+import com.example.auth.model.User;
+import com.example.auth.repository.UserRepository;
 
 @Service
 public class AuthService {
@@ -19,15 +23,19 @@ public class AuthService {
 
     public User register(String email, String password) {
         if (users.existsByEmail(email)) {
-            throw new IllegalArgumentException("Email is already registered");
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Email is already registered");
         }
-        return users.save(new User(null, email, passwordEncoder.encode(password)));
+        try {
+            return users.save(new User(null, email, passwordEncoder.encode(password)));
+        } catch (DuplicateKeyException exception) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Email is already registered", exception);
+        }
     }
 
     public String login(String email, String password) {
         User user = users.findByEmail(email)
                 .filter(found -> passwordEncoder.matches(password, found.getPassword()))
-                .orElseThrow(() -> new IllegalArgumentException("Invalid email or password"));
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Invalid email or password"));
         return jwtService.createToken(user.getEmail());
     }
 }

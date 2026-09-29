@@ -1,6 +1,7 @@
 package com.example.product.config;
 
 import org.springframework.beans.factory.annotation.Value;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
@@ -11,8 +12,8 @@ import org.springframework.security.web.authentication.UsernamePasswordAuthentic
 @Configuration
 public class SecurityConfig {
     @Bean
-    JwtAuthFilter jwtAuthFilter(@Value("${jwt.secret}") String secret) {
-        return new JwtAuthFilter(secret);
+    JwtAuthFilter jwtAuthFilter(@Value("${jwt.secret}") String secret, ObjectMapper objectMapper) {
+        return new JwtAuthFilter(secret, objectMapper);
     }
 
     @Bean

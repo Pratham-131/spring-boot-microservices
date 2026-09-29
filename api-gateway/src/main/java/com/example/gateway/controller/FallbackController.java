@@ -1,7 +1,7 @@
 package com.example.gateway.controller;
 
+import com.example.gateway.model.ApiError;
 import com.example.gateway.service.FallbackService;
-import java.util.Map;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
@@ -15,7 +15,7 @@ public class FallbackController {
     }
 
     @RequestMapping("/fallback")
-    public ResponseEntity<Map<String, String>> fallback() {
+    public ResponseEntity<ApiError> fallback() {
         return fallbackService.unavailable();
     }
 }
