@@ -133,6 +133,4 @@ Each service includes two JUnit tests: a service-layer test and a controller tes
 
 ## CI
 
-[![CI](https://github.com/OWNER/REPOSITORY/actions/workflows/ci.yml/badge.svg)](https://github.com/OWNER/REPOSITORY/actions/workflows/ci.yml)
-
-Replace `OWNER/REPOSITORY` in the badge URL with the GitHub repository path.
+[![CI](https://github.com/Pratham-131/spring-boot-microservices/actions/workflows/ci.yml/badge.svg)](https://github.com/Pratham-131/spring-boot-microservices/actions/workflows/ci.yml)
