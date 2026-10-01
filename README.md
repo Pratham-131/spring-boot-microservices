@@ -48,6 +48,13 @@ Auth, product, gateway fallback, and product JWT-filter errors use this JSON sha
 {"timestamp":"2026-09-29T12:00:00Z","status":404,"error":"Not Found","message":"Product not found"}
 ```
 
+## Requirements
+
+- Java 17
+- Maven 3.6.3 or later
+- Docker Engine with the Docker Compose plugin
+- `curl` and `jq` for the API walkthrough
+
 ## Run With Docker Compose
 
 Copy `.env.example` to `.env`, replace the `JWT_SECRET` placeholder with a random secret of at least 32 bytes, then run from the repository root. `.env.example` contains sample values, not a usable secret; `.env` is ignored by Git.
@@ -58,7 +65,7 @@ docker compose up --build
 
 MongoDB health is checked with `mongosh` every 5 seconds (3-second timeout, 20 retries). Auth and product healthchecks call their `/actuator/health` endpoints every 10 seconds (5-second timeout, 12 retries, 25-second start period). Compose starts auth and product after MongoDB is healthy, then starts the gateway after both services are healthy. Health URLs are `http://localhost:8080/actuator/health` for the published gateway and, when running services directly, `http://localhost:4001/actuator/health` and `http://localhost:4002/actuator/health`.
 
-The auth and product ports are not published by Compose. Their Swagger UI URLs are `http://localhost:4001/swagger-ui/index.html` and `http://localhost:4002/swagger-ui/index.html` when those services run directly or their ports are otherwise published; Compose users can reach them from the internal network at `http://auth-service:4001/swagger-ui/index.html` and `http://product-service:4002/swagger-ui/index.html`. OpenAPI documents are at `/v3/api-docs` on each service. MongoDB is published on `27017` and the gateway on `8080` by default; set `MONGO_HOST_PORT` or `GATEWAY_HOST_PORT` in `.env` if either host port is already in use. Stop the stack with `Ctrl+C` or `docker compose down`; the MongoDB volume is retained.
+Auth and product ports are not published by Compose, so their Swagger UI is not available on localhost when using the Compose stack. To open Swagger UI, run the service directly or add a port mapping in `docker-compose.yml` for local use. OpenAPI documents are at `/v3/api-docs` on each service. MongoDB is published on `27017` and the gateway on `8080` by default; set `MONGO_HOST_PORT` or `GATEWAY_HOST_PORT` in `.env` if either host port is already in use. Stop the stack with `Ctrl+C` or `docker compose down`; the MongoDB volume is retained.
 
 ## Environment Variables
 
@@ -142,6 +149,7 @@ The current JUnit 5 test-method counts are **11** for `auth-service`, **18** for
 
 ## Limitations
 
+- MongoDB runs without authentication and is published on a host port, so this setup is for local use only.
 - No service discovery or centralized configuration; the gateway uses configured service URLs.
 - No distributed tracing dependency or instrumentation.
 - The services do not call each other directly; the gateway routes to them independently.
