@@ -1,12 +1,18 @@
 # Spring Boot Microservices
 
-A small Java 17 and Spring Boot 3.2 project with an API gateway, authentication service, product service, MongoDB, JWT, and Resilience4j circuit breakers. Each service is an independent Maven project.
+## What this project does
+
+This small three-service demo lets users register and log in to receive JWTs, while a product service provides a catalog with public reads and authenticated writes. The API gateway routes authentication and product requests, and the product-service validates JWTs before allowing product creation and other writes. If a downstream service is unavailable, a Resilience4j circuit breaker returns an HTTP 503 fallback. The project demonstrates service separation, a separate MongoDB database per service, JWT security, API gateway routing, Docker Compose, and CI. Each service is an independent Maven project.
 
 ## Architecture
 
-```text
-Clients -> API Gateway :8080 -> Auth service :4001 -> MongoDB authdb
-                             -> Product service :4002 -> MongoDB productdb
+```mermaid
+flowchart LR
+  Clients --> Gateway["API Gateway :8080<br/>Circuit breakers"]
+  Gateway -->|/auth/**| Auth["Auth Service :4001"]
+  Gateway -->|/products/**| Product["Product Service :4002"]
+  Auth --> AuthDB[("MongoDB authdb")]
+  Product --> ProductDB[("MongoDB productdb")]
 ```
 
 The gateway forwards `/auth/**` and `/products/**` unchanged. Compose publishes the gateway on host port `8080` and MongoDB on host port `27017` by default; auth (`4001`) and product (`4002`) ports remain internal to the Compose network. `GATEWAY_HOST_PORT` and `MONGO_HOST_PORT` can override the host-side ports. MongoDB uses separate `authdb` and `productdb` databases. If a downstream call fails, the gateway circuit breaker forwards to `/fallback`, which returns HTTP 503.
@@ -32,7 +38,7 @@ The gateway forwards `/auth/**` and `/products/**` unchanged. Compose publishes 
 | `api-gateway` | 8080 | `GET /actuator/health` | Public | 200 | |
 | `api-gateway` | 8080 | Any method: `/fallback` | Public | 503 | Circuit-breaker response |
 
-The gateway only routes requests; JWT signature and expiry validation happens in the `product-service` filter for `POST`, `PUT`, and `DELETE` under `/products`. Product reads are public. Product write bodies require a nonblank `name` and `price > 0`. Registration stores a BCrypt hash and returns only the user ID and email; login issues a signed JWT that expires after one hour. The DELETE endpoint returns 204 on success.
+The gateway only routes requests and does not validate JWTs. The `product-service` filter validates JWT signature and expiry for `POST`, `PUT`, and `DELETE` under `/products`. Product reads are public. Product write bodies require a nonblank `name` and `price > 0`. Registration stores a BCrypt hash and returns only the user ID and email; login issues a signed JWT that expires after one hour. The DELETE endpoint returns 204 on success.
 
 Auth, product, gateway fallback, and product JWT-filter errors use this JSON shape; `timestamp` is ISO 8601:
 
@@ -130,8 +136,25 @@ The current JUnit 5 test-method counts are **11** for `auth-service`, **18** for
 
 - **Database per service:** auth and product own separate MongoDB databases, keeping their data and schemas independent without adding another database technology.
 - **Circuit breaker:** Resilience4j prevents repeated calls to an unavailable downstream service and returns a clear 503 fallback.
-- **Stateless JWT:** the auth service issues signed, expiring tokens; product-service verifies them locally for write requests, avoiding a database lookup on each product mutation.
+- **Stateless JWT:** the auth service issues signed, expiring tokens; the product-service verifies them locally for write requests, avoiding a database lookup on each product mutation.
 - **Scaling later:** keep the current deployment small; add Eureka for service discovery, Config Server for centralized configuration, and distributed tracing when the number of services or operational needs justify them.
+
+## Limitations
+
+- No service discovery or centralized configuration; the gateway uses configured service URLs.
+- No distributed tracing dependency or instrumentation.
+- The services do not call each other directly; the gateway routes to them independently.
+- There is no pagination or role-based authorization.
+- Test coverage is limited to 11 JUnit test methods across 2 test classes in `auth-service`, 18 across 2 in `product-service`, and 9 across 3 in `api-gateway`.
+- `JWT_SECRET` must be provided to both auth and product services; secret provisioning and rotation are outside this demo.
+
+## Possible Next Steps
+
+- Add pagination to the product catalog.
+- Add role-based authorization if different access levels are needed.
+- Add service discovery and centralized configuration.
+- Add distributed tracing.
+- Expand automated test coverage.
 
 ## CI
 
