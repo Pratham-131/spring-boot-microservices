@@ -1,5 +1,7 @@
 # Spring Boot Microservices
 
+**Tech stack:** Java 17, Spring Boot 3.2.12, Spring Security, JWT, Spring Cloud Gateway, Resilience4j, MongoDB, springdoc OpenAPI, Spring Boot Actuator, Docker Compose, JUnit 5, GitHub Actions
+
 ## What this project does
 
 This small three-service demo lets users register and log in to receive JWTs, while a product service provides a catalog with public reads and authenticated writes. The API gateway routes authentication and product requests, and the product-service validates JWTs before allowing product creation and other writes. If a downstream service is unavailable, a Resilience4j circuit breaker returns an HTTP 503 fallback. The project demonstrates service separation, a separate MongoDB database per service, JWT security, API gateway routing, Docker Compose, and CI. Each service is an independent Maven project.
@@ -137,7 +139,6 @@ The current JUnit 5 test-method counts are **11** for `auth-service`, **18** for
 - **Database per service:** auth and product own separate MongoDB databases, keeping their data and schemas independent without adding another database technology.
 - **Circuit breaker:** Resilience4j prevents repeated calls to an unavailable downstream service and returns a clear 503 fallback.
 - **Stateless JWT:** the auth service issues signed, expiring tokens; the product-service verifies them locally for write requests, avoiding a database lookup on each product mutation.
-- **Scaling later:** keep the current deployment small; add Eureka for service discovery, Config Server for centralized configuration, and distributed tracing when the number of services or operational needs justify them.
 
 ## Limitations
 
